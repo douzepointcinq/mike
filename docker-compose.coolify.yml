@@ -251,10 +251,11 @@ services:
       DOWNLOAD_SIGNING_SECRET: ${DOWNLOAD_SIGNING_SECRET}
       USER_API_KEYS_ENCRYPTION_SECRET: ${USER_API_KEYS_ENCRYPTION_SECRET}
       MCP_CONNECTORS_ENCRYPTION_SECRET: ${MCP_CONNECTORS_ENCRYPTION_SECRET}
-      # Clé fournisseur globale. Chaque utilisateur peut aussi saisir la sienne
-      # dans Settings > API Keys. Pour OpenAI/Gemini/Mistral…, ajouter ici
-      # OPENAI_API_KEY: ${OPENAI_API_KEY}, etc. (liste : backend/.env.example).
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # Clé fournisseur globale (OpenAI). Chaque utilisateur peut aussi saisir
+      # la sienne dans Settings > Bring Your Own Keys. Pour un autre
+      # fournisseur, ajouter ici ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}, etc.
+      # (liste : backend/.env.example).
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       SENTRY_DISABLED: "true"
       REDIS_URL: redis://redis:6379
       ASYNC_DOCUMENT_CONVERSION: "true"
