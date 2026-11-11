@@ -289,6 +289,19 @@ services:
       # fournisseur, ajouter ici ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}, etc.
       # (liste : backend/.env.example).
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # Connecteur Google Drive (Settings > Connectors) : même client OAuth
+      # que la connexion Google, avec en plus l'URI de redirection
+      # https://legal.douzepointcinq.com/api/user/integrations/google-drive/oauth/callback
+      # Le Picker (« Add files from Google Drive ») demande une clé API
+      # navigateur et le numéro du projet Google Cloud.
+      GOOGLE_DRIVE_OAUTH_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_DRIVE_PICKER_API_KEY: ${GOOGLE_DRIVE_PICKER_API_KEY}
+      GOOGLE_DRIVE_PICKER_APP_ID: ${GOOGLE_DRIVE_PICKER_APP_ID}
+      # Gmail et Agenda masqués pour l'instant (le contenu lu part chez le
+      # fournisseur du modèle). Retirer un service de la liste pour l'ouvrir,
+      # après avoir activé son API et ses scopes côté Google Cloud.
+      GOOGLE_WORKSPACE_DISABLED_PROVIDERS: gmail,google-calendar
       SENTRY_DISABLED: "true"
       REDIS_URL: redis://redis:6379
       ASYNC_DOCUMENT_CONVERSION: "true"
