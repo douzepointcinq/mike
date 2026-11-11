@@ -71,7 +71,9 @@ services:
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
       GOTRUE_JWT_ADMIN_ROLES: service_role
       GOTRUE_PASSWORD_MIN_LENGTH: "10"
-      # "false" le temps de créer les comptes, puis "true" et redéployer.
+      # Laisser "false" avec la connexion Google seule : le client OAuth est
+      # « Interne » au Workspace 12p5, donc seuls les comptes @12p5.com
+      # peuvent créer leur compte. "true" bloquerait aussi ces nouveaux venus.
       GOTRUE_DISABLE_SIGNUP: ${GOTRUE_DISABLE_SIGNUP}
       # "false" pour n'autoriser que Google (plus d'inscription par mot de
       # passe, plus besoin de SMTP pour la confirmation).
