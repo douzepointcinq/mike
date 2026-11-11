@@ -256,6 +256,10 @@ services:
   # --- API Express (jamais exposée : le frontend la sert sous /api) ---------
   backend:
     image: *backend-image
+    # Coolify ajoute son propre réseau à chaque service ; l'alias de la
+    # passerelle est sur « default », le backend doit donc y être aussi.
+    networks:
+      default: {}
     environment:
       PORT: "3001"
       NODE_ENV: production
