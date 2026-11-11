@@ -1,0 +1,279 @@
+# Mike (open-legal-products/mike) — variante production pour Coolify,
+# build pack « Docker Compose ».
+#
+# À placer à la RACINE d'un fork du dépôt upstream, sur le tag de la version
+# déployée (v2.1.0) : les deux fichiers montés plus bas (roles.sql,
+# gateway.conf) viennent du checkout et doivent appartenir à la même version
+# que les images.
+#
+# Différences avec le docker-compose.yml upstream (fait pour localhost) :
+#   - images publiées, épinglées en 2.1.0, aucun build sur le serveur ;
+#   - secret JWT Supabase et clés anon/service_role propres à l'instance
+#     (upstream : valeurs de démo publiques → n'importe qui pourrait forger un
+#     jeton service_role et lire toute la base par la passerelle) ;
+#   - aucun `ports:` : seuls frontend, gateway et storage sont exposés, par le
+#     proxy Coolify, via les domaines saisis dans l'interface ;
+#   - vrai SMTP au lieu de Mailpit ; NODE_ENV=production ; Sentry coupé ;
+#     login Google désactivé ; liste de redirections GoTrue restreinte.
+#
+# Variables : uniquement des ${VAR} nues. Coolify n'interprète pas
+# ${VAR:-défaut} ni ${VAR:?msg} (cf. b2c-mcp-diagnostic/README.md) : toute
+# valeur par défaut est donc écrite en dur ici.
+#
+# Domaines à affecter dans Coolify (port du conteneur après les « : ») :
+#   frontend → https://mike.douzepointcinq.com:3000
+#   gateway  → https://mike-auth.douzepointcinq.com:8000
+#   storage  → https://mike-files.douzepointcinq.com:9000
+
+x-backend-image: &backend-image ghcr.io/open-legal-products/mike-backend:2.1.0
+
+services:
+  # --- Supabase : Postgres ----------------------------------------------------
+  db:
+    image: supabase/postgres:17.6.1.136
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+      JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      JWT_EXP: "3600"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # Fixe à « postgres » le mot de passe des rôles supabase_auth_admin et
+      # authenticator (seulement au premier démarrage). Base jamais publiée :
+      # ils ne servent qu'à l'intérieur du réseau de la stack.
+      - ./docker/db-init/roles.sql:/docker-entrypoint-initdb.d/zz-roles.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # --- Supabase : Auth (GoTrue) -------------------------------------------------
+  auth:
+    image: supabase/gotrue:v2.189.0
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      # URL publique de la passerelle : les liens des e-mails en partent.
+      API_EXTERNAL_URL: ${SUPABASE_PUBLIC_URL}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:postgres@db:5432/postgres
+      GOTRUE_SITE_URL: ${FRONTEND_URL}
+      GOTRUE_URI_ALLOW_LIST: ${FRONTEND_URL}/**
+      GOTRUE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_PASSWORD_MIN_LENGTH: "10"
+      # "false" le temps de créer les comptes, puis "true" et redéployer.
+      GOTRUE_DISABLE_SIGNUP: ${GOTRUE_DISABLE_SIGNUP}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: "false"
+      # Jamais true ici : partages et invitations sont adressés par e-mail.
+      GOTRUE_MAILER_AUTOCONFIRM: "false"
+      GOTRUE_SMTP_HOST: ${SMTP_HOST}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT}
+      GOTRUE_SMTP_USER: ${SMTP_USER}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_SENDER_EMAIL}
+      GOTRUE_SMTP_SENDER_NAME: Mike
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/v1/verify
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # --- Supabase : PostgREST -------------------------------------------------
+  rest:
+    image: postgrest/postgrest:v14.12
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:postgres@db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+    restart: unless-stopped
+
+  # --- Supabase : passerelle nginx (/auth/v1, /rest/v1) — domaine public ---
+  gateway:
+    image: nginx:alpine
+    volumes:
+      - ./supabase/gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - auth
+      - rest
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8000/rest/v1/ || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # --- Ponctuel : schéma au premier démarrage, puis migrations en attente ---
+  db-init:
+    image: *backend-image
+    exclude_from_hc: true
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_started
+    environment:
+      DB: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+      MIGRATIONS_DIR: /app/migrations
+      MIGRATE_SH: /app/scripts/migrate.sh
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        until psql "$$DB" -tAc "select to_regclass('auth.users')" | grep -q auth; do
+          echo "waiting for auth schema..."; sleep 2;
+        done
+        if ! psql "$$DB" -tAc "select to_regclass('public.user_profiles')" | grep -q user_profiles; then
+          psql "$$DB" -v ON_ERROR_STOP=1 -f /app/schema.sql || exit 1;
+        elif ! psql "$$DB" -tAc "select to_regclass('public.schema_migrations')" | grep -q schema_migrations; then
+          bash /app/docker/db-init/adopt-ledger.sh || exit 1;
+        fi
+        bash /app/scripts/migrate.sh up || exit 1;
+        psql "$$DB" -c "grant usage on schema public to service_role;
+          grant all privileges on all tables in schema public to service_role;
+          grant all privileges on all sequences in schema public to service_role;
+          notify pgrst, 'reload schema';"
+    restart: "no"
+
+  # --- Stockage S3 (RustFS) — domaine public pour les uploads directs -------
+  storage:
+    image: rustfs/rustfs:latest
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_ACCESS_KEY: ${STORAGE_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${STORAGE_SECRET_KEY}
+    volumes:
+      - storage_data:/data
+    restart: unless-stopped
+
+  # --- Ponctuel : crée le bucket « mike » et y pose la politique CORS --------
+  # Les navigateurs envoient les fichiers directement au stockage (PUT signé) :
+  # le bucket doit autoriser l'origine de l'app. En 2.1.0, upstream pose un
+  # fichier statique limité à localhost ; on l'écrit ici depuis FRONTEND_URL.
+  createbucket:
+    image: amazon/aws-cli
+    exclude_from_hc: true
+    depends_on:
+      storage:
+        condition: service_started
+    environment:
+      AWS_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${STORAGE_SECRET_KEY}
+      AWS_DEFAULT_REGION: us-east-1
+      FRONTEND_URL: ${FRONTEND_URL}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until aws --endpoint-url http://storage:9000 s3 ls; do echo 'waiting for storage'; sleep 2; done
+        aws --endpoint-url http://storage:9000 s3 mb s3://mike || true
+        cat > /tmp/cors.json <<EOF
+        {"CORSRules":[{"AllowedOrigins":["$$FRONTEND_URL"],"AllowedMethods":["PUT","HEAD"],"AllowedHeaders":["Content-Type","x-amz-*"],"ExposeHeaders":["ETag"],"MaxAgeSeconds":3600}]}
+        EOF
+        cat /tmp/cors.json
+        aws --endpoint-url http://storage:9000 s3api put-bucket-cors --bucket mike --cors-configuration file:///tmp/cors.json
+    restart: "no"
+
+  # --- Redis : files BullMQ (conversion, extraction) ------------------------
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # --- Ponctuel : importe le catalogue mike-workflows depuis GitHub ---------
+  workflow-sync:
+    image: *backend-image
+    exclude_from_hc: true
+    environment:
+      SENTRY_DISABLED: "true"
+      SUPABASE_URL: http://gateway:8000
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
+      R2_ENDPOINT_URL: http://storage:9000
+      R2_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY}
+      R2_SECRET_ACCESS_KEY: ${STORAGE_SECRET_KEY}
+      R2_BUCKET_NAME: mike
+    command: ["npm", "run", "sync:workflows"]
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      createbucket:
+        condition: service_completed_successfully
+      gateway:
+        condition: service_healthy
+    restart: "no"
+
+  # --- API Express (jamais exposée : le frontend la sert sous /api) ---------
+  backend:
+    image: *backend-image
+    environment:
+      PORT: "3001"
+      NODE_ENV: production
+      FRONTEND_URL: ${FRONTEND_URL}
+      API_PUBLIC_URL: ${FRONTEND_URL}/api
+      SUPABASE_URL: http://gateway:8000
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
+      R2_ENDPOINT_URL: http://storage:9000
+      R2_PUBLIC_ENDPOINT_URL: ${R2_PUBLIC_ENDPOINT_URL}
+      R2_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY}
+      R2_SECRET_ACCESS_KEY: ${STORAGE_SECRET_KEY}
+      R2_BUCKET_NAME: mike
+      DOWNLOAD_SIGNING_SECRET: ${DOWNLOAD_SIGNING_SECRET}
+      USER_API_KEYS_ENCRYPTION_SECRET: ${USER_API_KEYS_ENCRYPTION_SECRET}
+      MCP_CONNECTORS_ENCRYPTION_SECRET: ${MCP_CONNECTORS_ENCRYPTION_SECRET}
+      # Clé fournisseur globale. Chaque utilisateur peut aussi saisir la sienne
+      # dans Settings > API Keys. Pour OpenAI/Gemini/Mistral…, ajouter ici
+      # OPENAI_API_KEY: ${OPENAI_API_KEY}, etc. (liste : backend/.env.example).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      SENTRY_DISABLED: "true"
+      REDIS_URL: redis://redis:6379
+      ASYNC_DOCUMENT_CONVERSION: "true"
+      ASYNC_TABULAR_EXTRACTION: "true"
+      WORKERS_MODE: thread
+    depends_on:
+      workflow-sync:
+        condition: service_completed_successfully
+      auth:
+        condition: service_started
+      rest:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # --- Next.js — domaine public principal ---------------------------------
+  frontend:
+    image: ghcr.io/open-legal-products/mike-frontend:2.1.0
+    environment:
+      API_BASE_URL: http://backend:3001
+      SENTRY_DISABLED: "true"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  storage_data:
+  redis_data:
