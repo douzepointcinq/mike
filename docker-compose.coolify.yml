@@ -22,9 +22,9 @@
 #
 # Pas de domaine dans Coolify : le tunnel Cloudflare Zero Trust « dpc-alpha »
 # route chaque nom d'hôte vers un port publié sur 127.0.0.1 :
-#   mike.douzepointcinq.com       → http://127.0.0.1:44400  (frontend)
-#   mike-auth.douzepointcinq.com  → http://127.0.0.1:44401  (gateway)
-#   mike-files.douzepointcinq.com → http://127.0.0.1:44402  (storage)
+#   legal.douzepointcinq.com      → http://127.0.0.1:44400  (frontend)
+#   legal-auth.douzepointcinq.com → http://127.0.0.1:44401  (gateway)
+#   legal-files.douzepointcinq.com → http://127.0.0.1:44402  (storage)
 #
 # Coolify : activer « Preserve Repository During Deployment », sinon les
 # fichiers montés depuis le dépôt (roles.sql, gateway.conf) n'existent pas.
