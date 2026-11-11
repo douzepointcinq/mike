@@ -76,8 +76,13 @@ services:
       GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
       GOTRUE_EXTERNAL_GOOGLE_ENABLED: "false"
-      # Jamais true ici : partages et invitations sont adressés par e-mail.
-      GOTRUE_MAILER_AUTOCONFIRM: "false"
+      # "true" seulement le temps d'un test sans SMTP : les comptes sont
+      # utilisables sans e-mail de confirmation. Partages et invitations étant
+      # adressés par e-mail, n'importe qui pourrait alors s'inscrire avec une
+      # adresse qui n'est pas la sienne : fermer les inscriptions
+      # (GOTRUE_DISABLE_SIGNUP=true) dès les comptes de test créés, et
+      # repasser à "false" avec un vrai SMTP avant d'ouvrir l'outil.
+      GOTRUE_MAILER_AUTOCONFIRM: ${GOTRUE_MAILER_AUTOCONFIRM}
       GOTRUE_SMTP_HOST: ${SMTP_HOST}
       GOTRUE_SMTP_PORT: ${SMTP_PORT}
       GOTRUE_SMTP_USER: ${SMTP_USER}
